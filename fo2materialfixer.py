@@ -64,7 +64,7 @@ class DDSToPNG(bpy.types.Operator):
 def _AlphaFix(object):
     material = object.data.materials[0]
     if "alpha" in material.name:
-        material.node_tree.links.new(GetBSDFNode(material).inputs["Alpha"], GetTextureNode(material).outputs["Color"])
+        material.node_tree.links.new(GetBSDFNode(material).inputs["Alpha"], GetTextureNode(material).outputs["Alpha"])
          
 
 class AlphaFix(bpy.types.Operator):
