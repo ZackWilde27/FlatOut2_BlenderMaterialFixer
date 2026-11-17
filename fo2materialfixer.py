@@ -6,6 +6,38 @@ bl_info = {
 }
 
 import bpy
+
+def GetBSDFNode(material):
+    return material.node_tree.nodes["Principled BSDF"]
+
+def GetTextureNode(material):
+    return GetBSDFNode(material).inputs["Base Color"].links[0].from_node
+
+def FixPath(path):
+    if path[-1] not in "/\\":
+        path += "\\" if "\\" in path else "/"
+    return path
+
+def _DDSToPNG(object, folderPath):
+    material = object.data.materials[0]
+    bsdfNode = GetBSDFNode(material)
+    textureNode = GetTextureNode(material)
+    path = textureNode.image.filepath
+
+    if "." in path:
+        if path[path.rindex(".") + 1:] == "dds":
+            
+            filename = path[path.rindex("\\" if "\\" in path else "/") + 1:]
+
+            if IsRoadMaterial(material):
+                filename = material.name.lower()
+            
+            # Clearing out both the extension from the filename, and any .00[n]'s that might be on the material name
+            if "." in filename:
+                filename = filename[:filename.index(".")]
+
+            textureNode.image = bpy.data.images.load(folderPath + filename + ".png", check_existing=True)
+         
     
 class DDSToPNG(bpy.types.Operator):
     """Finds all objects using DDS textures and fetches the PNG version from the specified texture folder"""
@@ -15,37 +47,25 @@ class DDSToPNG(bpy.types.Operator):
     folderPath: bpy.props.StringProperty(name="Texture Folder Path")
 
     def execute(self, context):
-        if self.folderPath[-1] not in "/\\":
-            self.folderPath += "\\" if "\\" in self.folderPath else "/"
+        self.folderPath = FixPath(self.folderPath)
         
         for object in bpy.data.objects:
-            if not object.data or object.type != "MESH": continue
-        
-            print(object.name, object.data.materials[0].name)
-
-            bsdfNode = object.data.materials[0].node_tree.nodes["Principled BSDF"]
-            textureNode = bsdfNode.inputs["Base Color"].links[0].from_node
-            path = textureNode.image.filepath
+            if not object.data or object.type != "MESH":
+                continue
             
-            if "." in path:
-                if path[path.rindex(".") + 1:] == "dds":
-                    
-                    filename = path[path.rindex("\\" if "\\" in path else "/") + 1:]
+            _DDSToPNG(object, self.folderPath)
 
-                    if IsRoadMaterial(object.data.materials[0]):
-                        filename = object.data.materials[0].name.lower()
-                    
-                    # Clearing out both the extension from the filename, and any .00[n]'s that might be on the material name
-                    if "." in filename:
-                        filename = filename[:filename.index(".")]
-
-                    textureNode.image = bpy.data.images.load(self.folderPath + filename + ".png", check_existing=True)
-                 
         return { 'FINISHED' }
     
     def invoke(self, context, event):
         wm = context.window_manager
         return wm.invoke_props_dialog(self)
+
+def _AlphaFix(object):
+    material = object.data.materials[0]
+    if "alpha" in material.name:
+        material.node_tree.links.new(GetBSDFNode(material).inputs["Alpha"], GetTextureNode(material).outputs["Color"])
+         
 
 class AlphaFix(bpy.types.Operator):
     """Finds all objects with 'alpha' in the name, and hooks up the alpha to the principled BSDF"""
@@ -54,20 +74,27 @@ class AlphaFix(bpy.types.Operator):
 
     def execute(self, context):
         for object in bpy.data.objects:
-            if not object.data or object.type != "MESH": continue
-                
-            if "alpha" in object.data.materials[0].name:
-                tree = object.data.materials[0].node_tree
-                bsdfNode = tree.nodes["Principled BSDF"]
-                textureNode = bsdfNode.inputs["Base Color"].links[0].from_node
-                tree.links.new(bsdfNode.inputs["Alpha"], textureNode.outputs["Color"])
-                 
+            if not object.data or object.type != "MESH":
+                continue
+
+            _AlphaFix(object)
+
         return { 'FINISHED' }
     
 def IsRoadMaterial(material):
     matName = material.name.lower()
     return matName.startswith("sdm_") or matName.startswith("dm_")
 
+def _LevelUVFix(object, fixOldBug):
+    material = object.data.materials[0]
+    matName = material.name
+    if len(object.data.uv_layers) > 1:
+        if IsRoadMaterial(material):
+            object.data.uv_layers[1].active_render = True
+
+        # Automates fixing the bug from the last version
+        elif fixOldBug and object.data.uv_layers[1].active_render:
+            object.data.uv_layers[0].active_render = True
 
 class LevelUVFix(bpy.types.Operator):
     """Finds all track geometry and fixes the UV map"""
@@ -78,23 +105,87 @@ class LevelUVFix(bpy.types.Operator):
 
     def execute(self, context):
         for object in bpy.data.objects:
-            if not object.data or object.type != "MESH": continue
+            if not object.data or object.type != "MESH":
+                continue
         
-            matName = object.data.materials[0].name
-            if len(object.data.uv_layers) > 1:
-                if IsRoadMaterial(object.data.materials[0]):
-                    object.data.uv_layers[1].active_render = True
-
-                # Automates fixing the bug from the last version
-                elif self.fixOldBug and object.data.uv_layers[1].active_render:
-                    object.data.uv_layers[0].active_render = True
+            _LevelUVFix(object, self.fixOldBug)
 
         return { 'FINISHED' }
         
     def invoke(self, context, event):
         wm = context.window_manager
         return wm.invoke_props_dialog(self)
+    
+def _RemoveMapping(object):
+    material = object.data.materials[0]
+    textureNode = GetTextureNode(material)
 
+    if textureNode.type != "TEX_IMAGE":
+        return
+
+    if textureNode.inputs["Vector"].is_linked:
+        material.node_tree.links.remove(textureNode.inputs["Vector"].links[0])
+    
+class RemoveMapping(bpy.types.Operator):
+    """Finds all materials with a Mapping node connected to the colour texture and disconnects it"""
+    bl_idname = "fo2materialfixer.removemapping"
+    bl_label = "Disconnect Mapping Nodes"
+    
+    def execute(self, context):
+        for object in bpy.data.objects:
+            if not object.data or object.type != "MESH":
+                continue
+        
+            _RemoveMapping(object)
+                        
+        return { 'FINISHED' }
+    
+def _SetChannelPacked(object):
+    textureNode = GetTextureNode(object.data.materials[0])
+    if textureNode.type != "TEX_IMAGE":
+        return
+
+    textureNode.image.alpha_mode = "CHANNEL_PACKED"
+    
+class SetChannelPacked(bpy.types.Operator):
+    """Sets all the alpha modes on each texture to be 'Channel Packed' rather than 'Straight'"""
+    bl_idname = "fo2materialfixer.setchannelpacked"
+    bl_label = "Set Channel Packed Alpha Mode"
+    
+    def execute(self, context):
+        for object in bpy.data.objects:
+            if not object.data or object.type != "MESH":
+                continue
+            
+            _SetChannelPacked(object)
+            
+        return { 'FINISHED' }
+    
+class FixEverything(bpy.types.Operator):
+    """Perform every fixing operator in one go"""
+    bl_idname = "fo2materialfixer.alloftheabove"
+    bl_label = "Fix Everything"
+    
+    folderPath: bpy.props.StringProperty(name="Texture Folder Path")
+    fixOldBug: bpy.props.BoolProperty(name="Undo UV fix on non-track")
+    
+    def execute(self, context):
+        self.folderPath = FixPath(self.folderPath)
+
+        for object in bpy.data.objects:
+            if not object.data or object.type != "MESH":
+                continue
+            
+            _DDSToPNG(object, self.folderPath)
+            _AlphaFix(object)
+            _LevelUVFix(object, self.fixOldBug)
+            _RemoveMapping(object)
+            _SetChannelPacked(object)
+            
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self)
+        
 
 class CustomMenu(bpy.types.Menu):
     bl_label = "FlatOut Material Fixer"
@@ -105,6 +196,9 @@ class CustomMenu(bpy.types.Menu):
         layout.operator("fo2materialfixer.ddstopng")
         layout.operator("fo2materialfixer.alphafix")
         layout.operator("fo2materialfixer.leveluvfix")
+        layout.operator("fo2materialfixer.removemapping")
+        layout.operator("fo2materialfixer.setchannelpacked")
+        layout.operator("fo2materialfixer.alloftheabove")
         
 def SetScriptButton(self, context):
     layout = self.layout
@@ -119,6 +213,9 @@ def register():
     bpy.utils.register_class(AlphaFix)
     bpy.utils.register_class(LevelUVFix)
     bpy.utils.register_class(CustomMenu)
+    bpy.utils.register_class(RemoveMapping)
+    bpy.utils.register_class(SetChannelPacked)
+    bpy.utils.register_class(FixEverything)
     
     bpy.types.TOPBAR_HT_upper_bar.append(draw_item)
     
@@ -128,6 +225,9 @@ def unregister():
     bpy.utils.unregister_class(AlphaFix)
     bpy.utils.unregister_class(LevelUVFix)
     bpy.utils.unregister_class(CustomMenu)
+    bpy.utils.unregister_class(RemoveMapping)
+    bpy.utils.unregister_class(SetChannelPacked)
+    bpy.utils.unregister_class(FixEverything)
     
     
 if __name__ == "__main__":
