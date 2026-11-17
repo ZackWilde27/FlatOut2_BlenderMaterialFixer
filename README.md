@@ -18,10 +18,16 @@ You will need Pillow to run the DDS converter, [here's](https://pillow.readthedo
 
 It's an addon for Blender, you can either import it in the settings window, or paste the script into blender's text editor and run it from there
 
-It'll add a tab at the top called ```FlatOut Material Fixer```, and from there you've got 3 tools:
+It'll add a tab at the top called ```FlatOut Material Fixer```, and from there you've got 5 operators + an operator that automatically does all of them:
 
-- DDSToPNG: Goes through every object and finds any using DDS textures, then points them to the corrosponding PNG file in the given textures folder
+- `DDS To PNG`: Goes through every object and finds any using DDS textures, then points them to the corrosponding PNG file in the given textures folder
 
-- ApplyAlpha: Finds all objects using a material with ```alpha``` in the name, and connects up the alpha to the BSDF automatically
+- `Apply Alpha`: Finds all objects using a material with ```alpha``` in the name, and connects up the alpha to the BSDF automatically
 
-- FixTrackUVs: Finds all track geometry, and switches the UVs over to the second one, making them look correct
+- `Fix Track UVs`: Finds all track geometry, and switches the UVs over to the second one, making them look correct
+
+- `Disconnect Mapping Nodes`: Goes through all materials and disconnects the mapping node linked to the colour texture
+
+- `Set Channel Packed Alpha Mode`: Goes through all materials and sets the colour texture's alpha mode to Channel Packed instead of Straight
+
+- `Fix Everything`: Performs all of the above operators in one go for convenience
