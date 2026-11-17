@@ -19,9 +19,13 @@ class DDSToPNG(bpy.types.Operator):
             self.folderPath += "\\" if "\\" in self.folderPath else "/"
         
         for object in bpy.data.objects:
-            if not object.data: continue
+            if not object.data or object.type != "MESH": continue
+        
+            print(object.name, object.data.materials[0].name)
 
-            path = object.data.materials[0].node_tree.nodes[3].image.filepath
+            bsdfNode = object.data.materials[0].node_tree.nodes["Principled BSDF"]
+            textureNode = bsdfNode.inputs["Base Color"].links[0].from_node
+            path = textureNode.image.filepath
             
             if "." in path:
                 if path[path.rindex(".") + 1:] == "dds":
@@ -35,7 +39,7 @@ class DDSToPNG(bpy.types.Operator):
                     if "." in filename:
                         filename = filename[:filename.index(".")]
 
-                    object.data.materials[0].node_tree.nodes[3].image = bpy.data.images.load(self.folderPath + filename + ".png", check_existing=True)
+                    textureNode.image = bpy.data.images.load(self.folderPath + filename + ".png", check_existing=True)
                  
         return { 'FINISHED' }
     
@@ -50,11 +54,13 @@ class AlphaFix(bpy.types.Operator):
 
     def execute(self, context):
         for object in bpy.data.objects:
-            if not object.data: continue
+            if not object.data or object.type != "MESH": continue
                 
             if "alpha" in object.data.materials[0].name:
                 tree = object.data.materials[0].node_tree
-                tree.links.new(tree.nodes[0].inputs[4], tree.nodes[3].outputs[1])
+                bsdfNode = tree.nodes["Principled BSDF"]
+                textureNode = bsdfNode.inputs["Base Color"].links[0].from_node
+                tree.links.new(bsdfNode.inputs["Alpha"], textureNode.outputs["Color"])
                  
         return { 'FINISHED' }
     
@@ -72,7 +78,7 @@ class LevelUVFix(bpy.types.Operator):
 
     def execute(self, context):
         for object in bpy.data.objects:
-            if not object.data: continue
+            if not object.data or object.type != "MESH": continue
         
             matName = object.data.materials[0].name
             if len(object.data.uv_layers) > 1:
