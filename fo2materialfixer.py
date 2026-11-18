@@ -181,6 +181,8 @@ class FixEverything(bpy.types.Operator):
             _LevelUVFix(object, self.fixOldBug)
             _RemoveMapping(object)
             _SetChannelPacked(object)
+
+        return { 'FINISHED' }
             
     def invoke(self, context, event):
         wm = context.window_manager
